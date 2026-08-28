@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mapa de Guerra: Espectro vs Sombra</title>
+
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+    <style>
+        body, html {
+            margin: 0; padding: 0; height: 100%;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden; 
+        }
+
+        #map {
+            height: calc(100vh - 50px);
+            width: 100%;
+            background-image: url('fondo.jpeg'); 
+            background-size: cover; 
+            background-position: center; 
+        }
+
+        #top-bar {
+            height: 50px; width: 100%; background-color: #222;
+            display: flex; color: white; font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.8); z-index: 1000; position: relative;
+        }
+        #bar-espectro {
+            height: 100%; width: 50%; background-color: #e2e8f0; color: #111;
+            display: flex; align-items: center; padding-left: 20px;
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); white-space: nowrap;
+            overflow: hidden;
+        }
+        #bar-sombra {
+            height: 100%; width: 50%; background-color: #111827; color: #fff;
+            display: flex; align-items: center; justify-content: flex-end; padding-right: 20px;
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); white-space: nowrap;
+            overflow: hidden;
+        }
+
+        #admin-panel {
+            display: none; 
+            position: absolute; top: 60px; right: 20px; 
+            background: rgba(20, 20, 25, 0.95); border: 2px solid #555; border-radius: 8px;
+            color: white; padding: 15px; z-index: 2000; box-shadow: 0px 5px 15px rgba(0,0,0,0.8);
+            text-align: center;
+            max-width: 320px;
+        }
+        #admin-panel h3 { margin: 0 0 10px 0; font-size: 1rem; border-bottom: 1px solid #444; padding-bottom: 10px;}
+        
+        .instrucciones { font-size: 0.85rem; color: #aaa; margin-bottom: 15px; }
+
+        .herramientas-container {
+            display: flex; justify-content: center; align-items: center; gap: 15px; margin-bottom: 15px;
+        }
+        .herramienta-logo {
+            width: 50px; height: 50px; cursor: pointer;
+            border: 3px solid transparent; border-radius: 8px;
+            transition: transform 0.2s, border-color 0.2s;
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+        .herramienta-borrar {
+            width: 50px; height: 50px; cursor: pointer;
+            border: 3px solid transparent; border-radius: 8px;
+            transition: transform 0.2s, border-color 0.2s;
+            background-color: #7f1d1d; color: white; 
+            display: flex; justify-content: center; align-items: center; font-size: 1.5rem;
+        }
+
+        .herramienta-activa {
+            border-color: #fbbf24 !important; 
+            transform: scale(1.1);
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+
+        #btn-admin {
+            position: absolute; bottom: 20px; right: 20px; z-index: 2000;
+            background: #2b2b2b; color: white; border: 2px solid #555; border-radius: 50%;
+            width: 50px; height: 50px; cursor: pointer; font-size: 1.5rem;
+            display: flex; justify-content: center; align-items: center;
+        }
+        #btn-admin:hover { background: #444; }
+
+        @media (max-width: 600px) {
+            #top-bar { font-size: 0.85rem; }
+            #bar-espectro { padding-left: 10px; }
+            #bar-sombra { padding-right: 10px; }
+            #admin-panel { top: 60px; right: 5%; left: 5%; width: 90%; max-width: none; box-sizing: border-box; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="top-bar">
+        <div id="bar-espectro">ESPECTRO: 0%</div>
+        <div id="bar-sombra">SOMBRA: 0%</div>
+    </div>
+
+    <div id="map"></div>
+
+    <button id="btn-admin">⚙️</button>
+    
+    <div id="admin-panel">
+        <h3>Comandancia de Facciones</h3>
+        <p class="instrucciones">Toca una herramienta y luego toca el mapa.</p>
+        
+        <div class="herramientas-container">
+            <img src="logoEspectro.webp" class="herramienta-logo" id="tool-espectro" onclick="seleccionarHerramienta('espectro')" title="Colocar Espectro">
+            <img src="logoSombra.webp" class="herramienta-logo" id="tool-sombra" onclick="seleccionarHerramienta('sombra')" title="Colocar Sombra">
+            <div class="herramienta-borrar" id="tool-borrar" onclick="seleccionarHerramienta('borrar')" title="Borrar Logo">🗑️</div>
+        </div>
+        
+        <button onclick="cerrarAdmin()" style="padding: 8px 16px; cursor:pointer; background:#444; color:white; border:none; border-radius:4px; font-weight:bold; width: 100%;">Finalizar Edición</button>
+    </div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyB13Xm64eUMAbRelJpEixJELegKbHKsNuA",
+            authDomain: "mapa-guerra-rol.firebaseapp.com",
+            databaseURL: "https://mapa-guerra-rol-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "mapa-guerra-rol",
+            storageBucket: "mapa-guerra-rol.firebasestorage.app",
+            messagingSenderId: "814148282820",
+            appId: "1:814148282820:web:8aae65dec6b454bf16dc91",
+            measurementId: "G-N61BH7FV19"
+        };
+        
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        const marcadoresRef = db.ref('marcadores');
+
+        const bounds = [[0, 0], [1000, 1000]];
+
+        // ---------------------------------------------------------
+        // MAPA CONFIGURADO: Permite arrastrar SOLO si hay zoom
+        // ---------------------------------------------------------
+        const map = L.map('map', { 
+            crs: L.CRS.Simple, 
+            minZoom: -2, 
+            maxZoom: 1,
+            attributionControl: false,
+            maxBounds: bounds,     // Evita que el mapa se salga de los márgenes
+            maxBoundsViscosity: 1.0 // Paredes sólidas, rebote cero al llegar al borde
+        });
+        
+        L.imageOverlay('mapa.webp', bounds).addTo(map);
+        map.fitBounds(bounds);
+
+        const tamañoIcono = [32, 32]; 
+        const anclaje = [16, 16]; 
+        const iconos = {
+            espectro: L.icon({ iconUrl: 'logoEspectro.webp', iconSize: tamañoIcono, iconAnchor: anclaje }),
+            sombra: L.icon({ iconUrl: 'logoSombra.webp', iconSize: tamañoIcono, iconAnchor: anclaje })
+        };
+
+        let datosGlobales = {};      
+        let marcadoresVisuales = {}; 
+        let esAdmin = false;
+        let herramientaSeleccionada = null; 
+
+        marcadoresRef.on('value', (snapshot) => {
+            datosGlobales = snapshot.val() || {};
+            renderizarMapa(); 
+        });
+
+        function renderizarMapa() {
+            for (let key in marcadoresVisuales) {
+                map.removeLayer(marcadoresVisuales[key]);
+            }
+            marcadoresVisuales = {};
+
+            let countEspectro = 0;
+            let countSombra = 0;
+            let total = 0;
+
+            for (let key in datosGlobales) {
+                const faccion = datosGlobales[key].faccion;
+                const lat = datosGlobales[key].lat;
+                const lng = datosGlobales[key].lng;
+
+                if(faccion === 'espectro') countEspectro++;
+                if(faccion === 'sombra') countSombra++;
+                total++;
+
+                const marker = L.marker([lat, lng], { icon: iconos[faccion] }).addTo(map);
+                
+                const colorTexto = faccion === 'espectro' ? '#334155' : '#000000';
+                marker.bindPopup(`
+                    <div style="text-align: center; min-width: 110px;">
+                        <p style="margin: 0; font-weight: bold; color: ${colorTexto}; font-size: 0.95rem;">
+                            ZONA DE ${faccion.toUpperCase()}
+                        </p>
+                    </div>
+                `);
+
+                marker.on('click', function(e) {
+                    if (esAdmin) {
+                        if (herramientaSeleccionada === 'borrar') {
+                            eliminarMarcadorDB(key);
+                        } else if (herramientaSeleccionada) {
+                            db.ref('marcadores/' + key).update({ faccion: herramientaSeleccionada });
+                        }
+                    }
+                });
+
+                marcadoresVisuales[key] = marker;
+            }
+
+            let pctEspectro = total === 0 ? 0 : Math.round((countEspectro / total) * 100);
+            let pctSombra = total === 0 ? 0 : Math.round((countSombra / total) * 100);
+
+            const anchoEspectro = total === 0 ? 50 : Math.max(pctEspectro, 5);
+            const anchoSombra = total === 0 ? 50 : Math.max(pctSombra, 5);
+
+            document.getElementById('bar-espectro').style.width = anchoEspectro + "%";
+            document.getElementById('bar-espectro').innerText = `ESPECTRO: ${pctEspectro}%`;
+            document.getElementById('bar-sombra').style.width = anchoSombra + "%";
+            document.getElementById('bar-sombra').innerText = `SOMBRA: ${pctSombra}%`;
+        }
+
+        function agregarMarcadorDB(latlng, faccion) {
+            marcadoresRef.push({
+                faccion: faccion,
+                lat: latlng.lat,
+                lng: latlng.lng
+            });
+        }
+
+        function eliminarMarcadorDB(key) {
+            marcadoresRef.child(key).remove();
+        }
+
+        const CLAVE_ADMIN = "1234"; 
+        
+        document.getElementById('btn-admin').addEventListener('click', () => {
+            const password = prompt("Introduce la clave de acceso de la Agencia:");
+            if (password === CLAVE_ADMIN) {
+                esAdmin = true;
+                document.getElementById('admin-panel').style.display = 'block';
+                document.getElementById('btn-admin').style.display = 'none';
+            } else if (password !== null) {
+                alert("Acceso denegado. Contraseña incorrecta.");
+            }
+        });
+
+        window.cerrarAdmin = function() {
+            esAdmin = false;
+            herramientaSeleccionada = null;
+            document.getElementById('tool-espectro').classList.remove('herramienta-activa');
+            document.getElementById('tool-sombra').classList.remove('herramienta-activa');
+            document.getElementById('tool-borrar').classList.remove('herramienta-activa');
+            
+            document.getElementById('admin-panel').style.display = 'none';
+            document.getElementById('btn-admin').style.display = 'flex';
+        };
+
+        window.seleccionarHerramienta = function(herramienta) {
+            herramientaSeleccionada = herramienta;
+            document.getElementById('tool-espectro').classList.remove('herramienta-activa');
+            document.getElementById('tool-sombra').classList.remove('herramienta-activa');
+            document.getElementById('tool-borrar').classList.remove('herramienta-activa');
+            document.getElementById('tool-' + herramienta).classList.add('herramienta-activa');
+        };
+
+        map.on('click', function(e) {
+            if (esAdmin && herramientaSeleccionada && herramientaSeleccionada !== 'borrar') {
+                agregarMarcadorDB(e.latlng, herramientaSeleccionada);
+            }
+        });
+
+    </script>
+</body>
+</html>
